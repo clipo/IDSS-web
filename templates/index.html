@@ -31,7 +31,12 @@
         margin:90px auto auto;
         padding:80px 0;
       }
-
+      #error
+      {
+        font-family:Arial, sans-serif;
+        text-align:center;
+        color: #FF0000
+      }
       .lead
       {
         background-color:rgba(255,255,255,0.6);
@@ -54,11 +59,11 @@
   <body>
     <div id="banner">
       <h1>IDSS</h1>
-      <p class="lead">Iterative Determinisitc Seriation Solution</p>
+      <p class="lead">Iterative Deterministic Seriation Solution (IDSS)</p>
     </div>
 
     <div id="emailform">
-        <form action="/upload" method="post">
+        <form action="/upload"  method=post enctype=multipart/form-data >
           Name: <input type="text" name="name"></input><br>
           Email: <input type="text" name="email"></input><br>
           University: <input type="text" name="university"></input><br>
@@ -66,9 +71,11 @@
           <input type="submit" value="Process Data"></input>
         </form>
               {% if error %}
-                <P>
-              <h1>{{ error }}</h1>
-                </P>
+                <div id="error">
+                <ul>
+                {{ error }}
+                  </ul>
+                </div>
               {% endif %}
 
     </div>
