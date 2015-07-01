@@ -85,7 +85,7 @@ def upload():
                                 filename=filename, path=filepath, jobname=jobname))
 
 @app.route('/processing')
-def check_to_see_if_done(filename,path,jobname):
+def process(filename,path,jobname):
     task = run_idss.apply_async(filename,path,jobname)
     return jsonify({}), 202, {'Location': url_for('taskstatus',
                                                   task_id=task.id)}
@@ -278,7 +278,7 @@ def long_task(self):
     total = random.randint(10, 50)
     for i in range(total):
         if not message or random.random() < 0.25:
-            message = '{0} {1} {2}...'.format(random.choice(action)
+            message = '{0} {1} {2}...'.format(random.choice(action))
         self.update_state(state='PROGRESS',
                           meta={'current': i, 'total': total,
                                 'status': message})
@@ -291,7 +291,7 @@ def long_task(self):
 def run_idss(filename, filepath, jobname):
     #set status to busy
     set_status_to_busy(jobname)
-    cmd = ["idss-seriation", "--inputfile", filename, "--outputdirectory", filepath]
+    cmd = ["idss-seriation.py", "--inputfile", filename, "--outputdirectory", filepath]
     p = subprocess.Popen(cmd, stdout = subprocess.PIPE,
                             stderr=subprocess.PIPE,
                             stdin=subprocess.PIPE)
