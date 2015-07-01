@@ -165,7 +165,7 @@ def check_file_for_valid_input(filename):
         reader = csv.reader(csvfile, delimiter='\t', quotechar='|')
         for row in reader:
             linenum +=1
-            print "now on line ", linenum
+            log.debug( "now on line: %s", linenum)
             problems += str(check_line_for_format(row))
             #   -- at least 4 rows (can't really do much with anything less
             #   -- no more than 20 rows (for now)
@@ -199,11 +199,11 @@ def check_line_for_format(line):
     log.debug( "checking the rest of the columns to see if they are all integers. ")
     for c in line[1:]:
         if isinstance(int(c),int):
-            print c, " is an integer"
+            log.debug("%d is an integer", c)
             pass
 
         else:
-            print c, " is not an integer"
+            log.debug("data value is not an integer")
             problems += " <li> columns of data are not integers. "
     log.debug("Errors so far: %s ", problems)
     return problems
