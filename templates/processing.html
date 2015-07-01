@@ -45,20 +45,21 @@
   </head>
 
   <body>
-    <div id="banner">
-      <h1>IDSS</h1>
-      <p class="lead">Processing</p>
-    </div>
+        <div class="container">
+        <div class="box">
 
-    <div id="emailform">
-        <form action="/submit_data" method="post">
-          <input type="text" name="email"></input>
-            <input type="text" name="name"></input>
-            <input type="text" name="university"></input>
+        <p id = "part1">You File has been Uploaded.
+        Please wait ... Your file is being processed. </p>
 
-          <input type="submit" value="Process Data"></input>
-            <in
-        </form>
-    </div>
+        <% import commandFile
+        processing = commandFile.Command_Process(tool_selected, input_file) %>
+        processing.processFile() %>
+
+        <script>
+        document.getElementById("part1").innerHTML = "You File is Processed. Download will begin Automatically";
+        </script>
+
+        </div>
+        </div>
   </body>
 </html>
