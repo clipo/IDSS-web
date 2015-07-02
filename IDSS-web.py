@@ -73,7 +73,7 @@ def run_idss(self,msg):
         set_status_to_busy(jobname)
 
         seriation = IDSS()
-        arguments={'inputfile': filename, 'outputdirectory': filepath }
+        arguments={'inputfile': filename, 'outputdirectory': filepath, 'debug':0 }
         seriation.initialize(arguments)
         log.debug("seriation initialized with args. Now running IDSS for %s and job %s", (filename, jobname))
         (frequencyResults, continuityResults, exceptionList, statsMap) = seriation.seriate()
@@ -294,7 +294,7 @@ def set_status_to_busy(jobname):
     try:
         con = lite.connect(DATABASE_NAME)
         cur = con.cursor()
-        cur.execute('update tblProcessing SET status=?, timestamp=?', ('busy','CURRENT_TIMESTAMP'))
+        cur.execute('update tblProcessing SET status=?, last_update=?', ('busy','CURRENT_TIMESTAMP'))
         con.commit()
         return True
     except lite.Error, e:
@@ -310,7 +310,7 @@ def set_status_to_free(jobname):
     try:
         con = lite.connect(DATABASE_NAME)
         cur = con.cursor()
-        cur.execute('update tblProcessing SET status=?, timestamp=?', ('free','CURRENT_TIMESTAMP'))
+        cur.execute('update tblProcessing SET status=?, last_update=?', ('free','CURRENT_TIMESTAMP'))
         con.commit()
         return True
     except lite.Error, e:
