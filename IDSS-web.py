@@ -7,14 +7,14 @@
 ##
 ## This flask project is modeled after the example at: http://blog.miguelgrinberg.com/post/using-celery-with-flask
 ##
-## Need to run: 1. celery worker -A IDSS-web.celery --loglevel=info
+## Need to run: 1. celery worker -A IDSS-web.celery --loglevel=info (dont forget to stop and restart when debugging)
 ##              2. ./redis-server
 
 
 ## debug info can be found at: /var/www/uploads/idss-web.log
 
 from flask import Flask, request, render_template, session, flash, redirect, \
-    url_for, jsonify, send_from_directory
+    url_for, jsonify, send_from_directory, copy_current_request_context
 from flask.ext.mail import Mail, Message
 import os
 from seriation import IDSS
@@ -43,7 +43,6 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['CELERY_BROKER_URL'] = 'redis://localhost:6379/0'
 app.config['CELERY_RESULT_BACKEND'] = 'redis://localhost:6379/0'
 
-
 app.config['SECRET_KEY'] = 'top-secret!'
 
 # Flask-Mail configuration
@@ -58,26 +57,38 @@ celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
 celery.conf.update(app.config)
 mail = Mail(app)
 
-log.basicConfig(filename='/var/www/uploads/idss-web.log',level=log.DEBUG)
+log.basicConfig(filename=UPLOAD_FOLDER + "idss-web.log",level=log.DEBUG)
 
 @celery.task(bind=True)
-def run_idss(self):
-    log.debug("now going to do long IDSS job via celery")
-    jobname=session['jobname']
-    filename=session['filename']
-    filepath=session['filepath']
-    email=session['email']
-    #set status to busy
-    set_status_to_busy(jobname)
-    seriation = IDSS()
-    args={'inputfile':filename, 'outputdirectory':filepath}
-    seriation.initialize(args)
-    log.debg("seriation initialized with args. Now running IDSS for %s and job %s", (filename, jobname))
-    (frequencyResults, continuityResults, exceptionList, statsMap) = seriation.seriate()
-    log.debug('Finished with IDSS processing for job %s', jobname)
-    zipFileURL = zipresults(jobname)
-    send_email(zipFileURL, email, jobname)
-    set_status_to_free(jobname)
+def run_idss(self,msg):
+    (filename,filepath,jobname,email)=msg.split("|")
+
+    with app.app_context():
+        log.debug("now going to do long IDSS job via celery")
+
+        message='processing...'
+        self.update_state(state='PROGRESS', meta={'status': message})
+        #set status to busy
+
+        set_status_to_busy(jobname)
+
+        seriation = IDSS()
+        arguments={'inputfile': filename, 'outputdirectory': filepath }
+        seriation.initialize(arguments)
+        log.debug("seriation initialized with args. Now running IDSS for %s and job %s", (filename, jobname))
+        (frequencyResults, continuityResults, exceptionList, statsMap) = seriation.seriate()
+
+        message='done. zipping results....'
+        self.update_state(state='PROGRESS',
+                meta={'status': message})
+        log.debug('Finished with IDSS processing for job %s', jobname)
+        zipFileURL = zipresults(jobname)
+        send_email(zipFileURL, email, jobname)
+        message='done. emailing results....'
+        self.update_state(state='PROGRESS', meta={'status': message})
+        set_status_to_free(jobname)
+        message='complete.'
+        self.update_state(state='PROGRESS', meta={'status': message})
 
 @app.route('/')
 def index():
@@ -93,10 +104,7 @@ def upload():
     name = request.form['name']
     university= request.form['university']
     email = request.form['email']
-    session['filename']=file
-    session['name']=name
-    session['university']=university
-    session['email']=email
+
     errors = ""
     if not name or not email or not university:
         errors = "<li>Please enter all the fields."
@@ -114,7 +122,11 @@ def upload():
     else:
         return render_template('index.html', error=errors)
 
+
     if file and allowed_file(file.filename):
+
+        session['name']=name
+        session['university']=university
         jobname=create_job()
         session['jobname']=jobname
         log.debug('Created jobname: %s', jobname)
@@ -122,6 +134,7 @@ def upload():
         log.debug('Filepath is: %s', filepath)
         if not os.path.exists(filepath):
                 os.makedirs(filepath)
+        session['filepath']=filepath
         filename=(os.path.join(filepath, file.filename))
         log.debug('Filename is %s: ', filename)
         file.save(filename)
@@ -134,7 +147,9 @@ def upload():
             log.debug( 'Uh oh. Problems. Message: %s', problems)
             return render_template('index.html', error=problems, filename=filename, path=filepath, jobname=jobname)
         else:
-            task = run_idss.apply_async()
+            log.debug("now going to run idss task.")
+            msg = str(filename)+"|"+str(filepath)+"|"+str(jobname)+"|"+str(email)
+            task = run_idss.apply_async(args=[msg])
             return jsonify({}), 202, {'Location': url_for('taskstatus',
                                                   task_id=task.id)}
 
@@ -149,22 +164,17 @@ def uploaded_file(jobname):
     zipf.close()
     return send_from_directory(app.config['UPLOAD_FOLDER'],
                                zipf)
+
 @app.route('/status/<task_id>')
 def taskstatus(task_id):
     task = run_idss.AsyncResult(task_id)
     if task.state == 'PENDING':
         ## job did not start yet
         response = {
-            'state': task.state,
-            'current': 0,
-            'total': 1,
             'status': 'Pending...'
         }
     elif task.state != 'FAILURE':
         response = {
-            'state': task.state,
-            'current': task.info.get('current', 0),
-            'total': task.info.get('total', 1),
             'status': task.info.get('status', '')
         }
         if 'result' in task.info:
@@ -172,9 +182,6 @@ def taskstatus(task_id):
     else:
         # something went wrong in the background job
         response = {
-            'state': task.state,
-            'current': 1,
-            'total': 1,
             'status': str(task.info),  # this is the exception raised
         }
     return jsonify(response)
@@ -315,10 +322,10 @@ def set_status_to_free(jobname):
             con.close()
 
 def zip_results(jobname):
-    zipf=zipfile.ZipFile(jobname+".zip","w")
-    zipdir="/var/www/uploads/"+jobname
+    zipf=zipfile.ZipFile(jobname + ".zip", "w")
+    zipdir= UPLOAD_FOLDER + jobname
     zipf.close()
-    return "/uploads/"+jobname+".zip"
+    return "/uploads/"+ jobname + ".zip"
 
 def send_email(zipfileURL, email, jobname):
     msgtxt = 'IDSS results from job: ' + str(jobname)
