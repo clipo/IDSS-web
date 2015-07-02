@@ -30,8 +30,8 @@ app.config['CELERY_RESULT_BACKEND'] = 'redis://localhost:6379/0'
 
 celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
 
-FORMAT = '%(asctime)-15s %(clientip)s %(user)-8s %(message)s'
-log.basicConfig(format=FORMAT)
+
+log.basicConfig(filename='/var/www/uploads/idss-web.log',level=log.DEBUG)
 
 
 @app.route('/')
@@ -81,13 +81,9 @@ def upload():
             log.debug( 'Uh oh. Problems. Message: %s', problems)
             return render_template('index.html', error=problems, filename=filename, path=filepath, jobname=jobname)
         else:
-            return redirect(url_for('/processing',
-                                filename=filename, path=filepath, jobname=jobname))
 
-@app.route('/processing')
-def process(filename,path,jobname):
-    task = run_idss.apply_async(filename,path,jobname)
-    return jsonify({}), 202, {'Location': url_for('taskstatus',
+            task = run_idss.apply_async(args=[filename,filepath,jobname])
+            return jsonify({}), 202, {'Location': url_for('taskstatus',
                                                   task_id=task.id)}
 
 # This route is expecting a parameter containing the name
@@ -188,7 +184,7 @@ def check_line_for_format(line):
     if len(line)<3:
         problems += " <li> Too few columns ", len(line), " is < 3. "
     ## check that first column is string
-    log.debug( "Checking that the first column is a string.  First column: %d", line[0])
+    log.debug( "Checking that the first column is a string.  First column: %s", str(line[0]))
     if isinstance(line[0], basestring):
         pass
     else:
@@ -199,7 +195,6 @@ def check_line_for_format(line):
     log.debug( "checking the rest of the columns to see if they are all integers. ")
     for c in line[1:]:
         if isinstance(int(c),int):
-            log.debug("%d is an integer", c)
             pass
 
         else:
@@ -272,7 +267,17 @@ def set_status_to_free(jobname):
             con.close()
 
 @celery.task(bind=True)
-def long_task(self):
+def run_idss(self,data):
+    jobname=data[0]
+    filename=data[1]
+    filepath=data[2]
+    #set status to busy
+    set_status_to_busy(jobname)
+    cmd = ["idss-seriation.py", "--inputfile", filename, "--outputdirectory", filepath]
+    p = subprocess.Popen(cmd, stdout = subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            stdin=subprocess.PIPE)
+    out,err = p.communicate()
     action = ['Starting up', 'Processing', 'Grinding away', 'Sweating the details', 'Figuring it out','Chipping away','Chugging along','Still at it']
     message = ''
     total = random.randint(10, 50)
@@ -287,16 +292,6 @@ def long_task(self):
             'result': 42}
 
 
-
-def run_idss(filename, filepath, jobname):
-    #set status to busy
-    set_status_to_busy(jobname)
-    cmd = ["idss-seriation.py", "--inputfile", filename, "--outputdirectory", filepath]
-    p = subprocess.Popen(cmd, stdout = subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            stdin=subprocess.PIPE)
-    out,err = p.communicate()
-    return out
 
 def is_email_address_valid(email):
     """Validate the email address using a regex."""
