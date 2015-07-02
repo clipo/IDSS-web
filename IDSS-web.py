@@ -9,6 +9,8 @@
 ##
 from flask import render_template
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, jsonify
+from flask_mail import Mail
+from flask.ext.mail import Message
 import os.path
 import os
 from seriation import IDSS
@@ -37,10 +39,9 @@ app.config['CELERY_BROKER_URL'] = 'redis://localhost:6379/0'
 app.config['CELERY_RESULT_BACKEND'] = 'redis://localhost:6379/0'
 
 celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
-
+mail = Mail(app)
 
 log.basicConfig(filename='/var/www/uploads/idss-web.log',level=log.DEBUG)
-
 
 @app.route('/')
 def index():
@@ -89,7 +90,6 @@ def upload():
             log.debug( 'Uh oh. Problems. Message: %s', problems)
             return render_template('index.html', error=problems, filename=filename, path=filepath, jobname=jobname)
         else:
-
             task = run_idss.apply_async(args=[filename,filepath,jobname])
             return jsonify({}), 202, {'Location': url_for('taskstatus',
                                                   task_id=task.id)}
@@ -101,7 +101,7 @@ def upload():
 @app.route('/uploads/<jobname>')
 def uploaded_file(jobname):
     zipf=zipfile.ZipFile(jobname+".zip","w")
-    zipdir="/var/www/uploads/"+jobname,zipf
+    zipdir="/var/www/uploads/"+jobname
     zipf.close()
     return send_from_directory(app.config['UPLOAD_FOLDER'],
                                zipf)
@@ -198,7 +198,6 @@ def check_line_for_format(line):
     else:
         problems += " <li> First column entry is not a string. "
 
-
     ## check that that the other columns are integers
     log.debug( "checking the rest of the columns to see if they are all integers. ")
     for c in line[1:]:
@@ -217,12 +216,10 @@ def create_job():
 def check_to_see_if_results_ready(jobname):
     os.path.isfile(jobname)
 
-
 ## checks sqlite table to see if its okay to start new job
 ## returns either "free", "busy" or errors
 def check_to_see_if_processing_is_taking_place(jobname):
     con = None
-
     try:
         con = lite.connect(DATABASE_NAME)
 
@@ -243,7 +240,6 @@ def check_to_see_if_processing_is_taking_place(jobname):
 
 def set_status_to_busy(jobname):
     con = None
-
     try:
         con = lite.connect(DATABASE_NAME)
         cur = con.cursor()
@@ -275,31 +271,38 @@ def set_status_to_free(jobname):
             con.close()
 
 @celery.task(bind=True)
-def run_idss(self,data):
+def run_idss(data):
+    log.debug("now going to do long IDSS job via celery")
     jobname=data[0]
     filename=data[1]
     filepath=data[2]
+    email=data[3]
     #set status to busy
     set_status_to_busy(jobname)
-    cmd = ["idss-seriation.py", "--inputfile", filename, "--outputdirectory", filepath]
-    p = subprocess.Popen(cmd, stdout = subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            stdin=subprocess.PIPE)
-    out,err = p.communicate()
-    action = ['Starting up', 'Processing', 'Grinding away', 'Sweating the details', 'Figuring it out','Chipping away','Chugging along','Still at it']
-    message = ''
-    total = random.randint(10, 50)
-    for i in range(total):
-        if not message or random.random() < 0.25:
-            message = '{0} {1} {2}...'.format(random.choice(action))
-        self.update_state(state='PROGRESS',
-                          meta={'current': i, 'total': total,
-                                'status': message})
-        time.sleep(1)
-    return {'current': 100, 'total': 100, 'status': 'Task completed!',
-            'result': 42}
+    seriation = IDSS()
+    args={'inputfile':filename, 'outputdirectory':filepath}
+    seriation.initialize(args)
+    log.debg("seriation initialized with args. Now running IDSS for %s and job %s", (filename, jobname))
+    (frequencyResults, continuityResults, exceptionList, statsMap) = seriation.seriate()
+    log.debug('Finished with IDSS processing for job %s', jobname)
+    zipFileURL = zipresults(jobname)
+    send_email(zipFileURL, email, jobname)
+    set_status_to_free(jobname)
 
+def zip_results(jobname):
+    zipf=zipfile.ZipFile(jobname+".zip","w")
+    zipdir="/var/www/uploads/"+jobname
+    zipf.close()
+    return "/uploads/"+jobname+".zip"
 
+def send_email(zipfileURL, email, jobname):
+    msgtxt = 'IDSS results from job: ' + str(jobname)
+    msg = Message(msgtxt, recipients=[email]  )
+    msg.body = 'Your seriation results are complete. You can download a compressed directory of the results here: ' + str(zipfileURL)
+    """Background task to send an email with Flask-Mail."""
+    with app.app_context():
+        mail.send(msg)
+        log.debug('Sending results of file %s to: %s', (zipfileURL,email))
 
 def is_email_address_valid(email):
     """Validate the email address using a regex."""
