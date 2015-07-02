@@ -7,11 +7,15 @@
 ##
 ## This flask project is modeled after the example at: http://blog.miguelgrinberg.com/post/using-celery-with-flask
 ##
-from flask import render_template
-from flask import Flask, render_template, request, redirect, url_for, send_from_directory, jsonify
-from flask_mail import Mail
-from flask.ext.mail import Message
-import os.path
+## Need to run: 1. celery worker -A IDSS-web.celery --loglevel=info
+##              2. ./redis-server
+
+
+## debug info can be found at: /var/www/uploads/idss-web.log
+
+from flask import Flask, request, render_template, session, flash, redirect, \
+    url_for, jsonify, send_from_directory
+from flask.ext.mail import Mail, Message
 import os
 from seriation import IDSS
 import uuid
@@ -20,7 +24,6 @@ from pyparsing import *
 import sqlite3 as lite
 import sys
 import zipfile
-import subprocess
 import re
 import logging as log
 import time
@@ -35,13 +38,46 @@ MAX_ASSEMBLAGES = 15
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+
+# Celery configuration
 app.config['CELERY_BROKER_URL'] = 'redis://localhost:6379/0'
 app.config['CELERY_RESULT_BACKEND'] = 'redis://localhost:6379/0'
 
+
+app.config['SECRET_KEY'] = 'top-secret!'
+
+# Flask-Mail configuration
+app.config['MAIL_SERVER'] = 'smtp.googlemail.com'
+app.config['MAIL_PORT'] = 587
+app.config['MAIL_USE_TLS'] = True
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
+app.config['MAIL_DEFAULT_SENDER'] = 'clipo@binghamton.edu'
+
 celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
+celery.conf.update(app.config)
 mail = Mail(app)
 
 log.basicConfig(filename='/var/www/uploads/idss-web.log',level=log.DEBUG)
+
+@celery.task(bind=True)
+def run_idss(self):
+    log.debug("now going to do long IDSS job via celery")
+    jobname=session['jobname']
+    filename=session['filename']
+    filepath=session['filepath']
+    email=session['email']
+    #set status to busy
+    set_status_to_busy(jobname)
+    seriation = IDSS()
+    args={'inputfile':filename, 'outputdirectory':filepath}
+    seriation.initialize(args)
+    log.debg("seriation initialized with args. Now running IDSS for %s and job %s", (filename, jobname))
+    (frequencyResults, continuityResults, exceptionList, statsMap) = seriation.seriate()
+    log.debug('Finished with IDSS processing for job %s', jobname)
+    zipFileURL = zipresults(jobname)
+    send_email(zipFileURL, email, jobname)
+    set_status_to_free(jobname)
 
 @app.route('/')
 def index():
@@ -57,6 +93,10 @@ def upload():
     name = request.form['name']
     university= request.form['university']
     email = request.form['email']
+    session['filename']=file
+    session['name']=name
+    session['university']=university
+    session['email']=email
     errors = ""
     if not name or not email or not university:
         errors = "<li>Please enter all the fields."
@@ -76,6 +116,7 @@ def upload():
 
     if file and allowed_file(file.filename):
         jobname=create_job()
+        session['jobname']=jobname
         log.debug('Created jobname: %s', jobname)
         filepath = UPLOAD_FOLDER+str(jobname)+"/"
         log.debug('Filepath is: %s', filepath)
@@ -86,11 +127,14 @@ def upload():
         file.save(filename)
         problems = check_file_for_valid_input(filename)
         log.debug("Problems: %s", problems)
+        session['filename']=filename
+        session['filepath']=filepath
+        session['email']=email
         if problems is not "":
             log.debug( 'Uh oh. Problems. Message: %s', problems)
             return render_template('index.html', error=problems, filename=filename, path=filepath, jobname=jobname)
         else:
-            task = run_idss.apply_async(args=[filename,filepath,jobname])
+            task = run_idss.apply_async()
             return jsonify({}), 202, {'Location': url_for('taskstatus',
                                                   task_id=task.id)}
 
@@ -269,25 +313,6 @@ def set_status_to_free(jobname):
     finally:
         if con:
             con.close()
-
-@celery.task(bind=True)
-def run_idss(data):
-    log.debug("now going to do long IDSS job via celery")
-    jobname=data[0]
-    filename=data[1]
-    filepath=data[2]
-    email=data[3]
-    #set status to busy
-    set_status_to_busy(jobname)
-    seriation = IDSS()
-    args={'inputfile':filename, 'outputdirectory':filepath}
-    seriation.initialize(args)
-    log.debg("seriation initialized with args. Now running IDSS for %s and job %s", (filename, jobname))
-    (frequencyResults, continuityResults, exceptionList, statsMap) = seriation.seriate()
-    log.debug('Finished with IDSS processing for job %s', jobname)
-    zipFileURL = zipresults(jobname)
-    send_email(zipFileURL, email, jobname)
-    set_status_to_free(jobname)
 
 def zip_results(jobname):
     zipf=zipfile.ZipFile(jobname+".zip","w")
