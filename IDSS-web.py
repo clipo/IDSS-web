@@ -1,4 +1,12 @@
-
+## IDSS-web: a flask-based webservice for the IDSS algorithim
+## The goal of this project is to allow users to generate IDSS seriation results (basic frequency seriation as a start)
+## using a web interface. The app must do some tracking of long running processes since it can take some time to get
+## an IDSS result as we get larger #s of assemblages. We limit the number of assemblages so that the
+## machine does not go into near-infinite processing. We want to log the activity (user info) and the datasets (input and output)
+## Ultimately, the results should come in the form of an email with a link to the zipped results.
+##
+## This flask project is modeled after the example at: http://blog.miguelgrinberg.com/post/using-celery-with-flask
+##
 from flask import render_template
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, jsonify
 import os.path
@@ -15,7 +23,7 @@ import re
 import logging as log
 import time
 import random
-from celery import Celery  # uses RabbitMQ
+from celery import Celery  # uses redis-server
 
 DATABASE_NAME = './database/idssProcessing.sqlite'
 UPLOAD_FOLDER = '/var/www/uploads/'
