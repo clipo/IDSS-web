@@ -150,6 +150,7 @@ def upload():
             log.debug("now going to run idss task.")
             msg = str(filename)+"|"+str(filepath)+"|"+str(jobname)+"|"+str(email)
             task = run_idss.apply_async(args=[msg])
+            log.debug("task id is: %s", task.id)
             return jsonify({}), 202, {'Location': url_for('taskstatus',
                                                   task_id=task.id)}
 
